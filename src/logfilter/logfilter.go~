@@ -1,0 +1,185 @@
+package main
+
+import (
+	"bufio"
+	"encoding/xml"
+	"fmt"
+	"os"
+	"os/exec"
+	"regexp"
+	"strconv"
+	"strings"
+	"time"
+)
+
+type Filter_item struct {
+	Name  string   `xml:"name,attr"`
+	Value []string `xml:Value`
+}
+
+type Filters struct {
+	XMLName xml.Name      `xml:"filters"`
+	Filter  []Filter_item `xml:"Filter"`
+}
+
+func readXml(path string) (err error, filter []Filter_item) {
+
+	xmlFile, err := os.Open(path)
+	if err != nil {
+		return
+	}
+
+	defer xmlFile.Close()
+
+	fi, _ := xmlFile.Stat()
+	buf := make([]byte, fi.Size())
+	_, err = xmlFile.Read(buf)
+	if err != nil {
+		return
+	}
+
+	v := Filters{}
+	err = xml.Unmarshal(buf, &v)
+	if err != nil {
+		return
+	}
+
+	filter = v.Filter
+
+	//debug
+	/*
+		for _, value := range v.Filter {
+			fmt.Println(value.Name)
+		}
+	*/
+	return
+}
+
+func readLine(r *bufio.Reader) (string, error) {
+	var (
+		isPrefix bool  = true
+		err      error = nil
+		line, ln []byte
+	)
+	for isPrefix && err == nil {
+		line, isPrefix, err = r.ReadLine()
+		ln = append(ln, line...)
+	}
+	return string(ln), err
+}
+
+func usage() {
+	fmt.Println("[adb] [device] [package] [filter regex] [out dir] [parent pid]")
+}
+
+func main() {
+
+	fmt.Println("******log filter******")
+
+	argsNoProg := os.Args[1:]
+
+	if len(argsNoProg) != 6 {
+		usage()
+		return
+	}
+
+	appName := argsNoProg[0]
+	deviceName := argsNoProg[1]
+	packageName := argsNoProg[2]
+	regFile := argsNoProg[3]
+	outDir := argsNoProg[4]
+	parentPid, err := strconv.ParseInt(argsNoProg[5], 10, 64)
+	if err != nil {
+		return
+	}
+
+	//mk dir
+	if _, err := os.Stat(outDir); os.IsNotExist(err) {
+		err := os.Mkdir(outDir, os.ModePerm)
+		if err != nil {
+			panic(err)
+		}
+	}
+
+	//read config and regex
+	err, filter := readXml(regFile)
+	if err != nil {
+		panic(err)
+		return
+	}
+
+	//run logcat
+	cmd := exec.Command(appName, "-s", deviceName, "logcat")
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		panic(err)
+		return
+	}
+
+	err = cmd.Start()
+	if err != nil {
+		return
+	}
+	defer cmd.Wait()
+
+	//start check parent
+	//check if parent die
+	go func() {
+		for {
+			process, err := os.FindProcess(int(parentPid))
+			if err != nil {
+				cmd.Process.Kill()
+				os.Exit(0)
+			}
+			process.Release()
+			time.Sleep(5 * 1e9)
+		}
+	}()
+
+	//create filter files and monitor it
+	fs := []*os.File{}
+	//create filter files
+	for _, v := range filter {
+		// create log file
+		f, _ := os.Create(outDir + "/" + v.Name)
+		fs = append(fs, f)
+		defer f.Close()
+	}
+
+	//captual filter
+	r := bufio.NewReader(stdout)
+	s, e := readLine(r)
+	for e == nil {
+		//contain packname
+		//if strings.Contains(s, packageName) {
+		for index, v := range filter {
+			ok := false
+			for _, value := range v.Value {
+				//fmt.Println(s)
+				text := strings.Replace(value, "[package]", packageName, -1)
+				//all log
+				if text == "*" {
+					fs[index].WriteString(s)
+					break
+				}
+				// info filter
+				reg, _ := regexp.Compile(text)
+				ok = reg.MatchString(s)
+				if !ok {
+					break
+				}
+			}
+			if ok {
+				//append file
+				//fmt.Println(s)
+				_, err := fs[index].WriteString(s)
+				if err != nil {
+					fmt.Println(err)
+				}
+			}
+		}
+
+		s, e = readLine(r)
+	}
+}

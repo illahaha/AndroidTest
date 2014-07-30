@@ -1,0 +1,2 @@
+[logfilter]
+logfilter.exe adb.exe cff03fe03727250 com.example.hellojni filters.xml com.example.hellojni

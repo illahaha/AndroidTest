@@ -1,0 +1,103 @@
+package handle
+
+import (
+	"encoding/xml"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+)
+
+type AndroidTarget struct {
+	Id     string `xml:"id,attr"`
+	Path   string
+	Script string
+}
+
+type AndroidTargets struct {
+	XMLName xml.Name        `xml:"Targets"`
+	Target  []AndroidTarget `xml:"Target"`
+}
+
+func readConfig(path string) (int, []AndroidTarget) {
+
+	//open xml config
+	xmlFile, err := os.Open(path)
+	if err != nil {
+		fmt.Println("Error opening file:", err)
+		return -1, nil
+	}
+
+	defer xmlFile.Close()
+
+	//read xml to buf
+	fi, _ := xmlFile.Stat()
+	buf := make([]byte, fi.Size())
+	_, err = xmlFile.Read(buf)
+	if err != nil {
+		fmt.Println("read xml file failed", err)
+		return -1, nil
+	}
+
+	//handle xml
+	v := AndroidTargets{}
+	err = xml.Unmarshal(buf, &v)
+	if err != nil {
+		fmt.Println("get config file failed", err)
+		return -1, nil
+	}
+
+	return 0, v.Target
+}
+
+func Handle(Type string, Serial string) {
+
+	fmt.Println("handle it")
+
+	err, v := readConfig(os.Args[2])
+	if err != 0 {
+		fmt.Println("read config failed")
+		return
+	}
+
+	//list  target
+	fmt.Println("-----------------------------------")
+	fmt.Println("TARGET\tID\tPATH\tSCRIPT")
+	for _, value := range v {
+		fmt.Print("APK\t")
+		fmt.Print(value.Id, "\t")
+		fmt.Print(value.Path, "\t")
+		fmt.Print(value.Script, "\t")
+		fmt.Println()
+	}
+	fmt.Println("-----------------------------------")
+	fmt.Println()
+
+	for _, value := range v {
+
+		cmd := exec.Command(Type, Serial, value.Id, value.Path, value.Script)
+
+		stdout, err := cmd.StdoutPipe()
+		if err != nil {
+			fmt.Println(err)
+			continue
+		}
+		stderr, err := cmd.StderrPipe()
+		if err != nil {
+			fmt.Println(err)
+			continue
+		}
+
+		err = cmd.Start()
+		if err != nil {
+			fmt.Println(err)
+			continue
+		}
+		defer cmd.Wait()
+
+		go io.Copy(os.Stdout, stdout)
+		go io.Copy(os.Stderr, stderr)
+	}
+
+	return
+}

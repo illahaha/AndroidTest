@@ -1,0 +1,90 @@
+package work
+
+import (
+	"encoding/xml"
+	"fmt"
+	"handle"
+	"os"
+	"sync"
+)
+
+type Device struct {
+	Id           string `xml:"id,attr"`
+	Type         string `xml:"type,attr"`
+	Serialnumber string
+	Name         string
+}
+
+type Devices struct {
+	XMLName xml.Name `xml:"Devices"`
+	Device  []Device `xml:"Device"`
+}
+
+func readConfig(path string) (int, []Device) {
+
+	//open xml config
+	xmlFile, err := os.Open(path)
+	if err != nil {
+		fmt.Println("Error opening file:", err)
+		return -1, nil
+	}
+
+	defer xmlFile.Close()
+
+	//read xml to buf
+	fi, _ := xmlFile.Stat()
+	buf := make([]byte, fi.Size())
+	_, err = xmlFile.Read(buf)
+	if err != nil {
+		fmt.Println("read xml file failed", err)
+		return -1, nil
+	}
+
+	//handle xml
+	v := Devices{}
+	err = xml.Unmarshal(buf, &v)
+	if err != nil {
+		fmt.Println("get config file failed", err)
+		return -1, nil
+	}
+
+	return 0, v.Device
+}
+
+func Work() {
+	fmt.Println("work thread")
+
+	err, v := readConfig("devices.xml")
+	if err != 0 {
+		fmt.Println("read config failed")
+		return
+	}
+
+	//waitgroup
+	var w sync.WaitGroup
+
+	//list devices and go it
+	fmt.Println("==================================")
+	fmt.Println("DEVICE\tID\tNAME\tSERIAL")
+	for _, value := range v {
+		fmt.Print(value.Type, "\t")
+		fmt.Print(value.Id, "\t")
+		fmt.Print(value.Name, "\t")
+		fmt.Print(value.Serialnumber, "\t")
+		fmt.Println()
+	}
+	fmt.Println("==================================")
+
+	//run gorotine
+	for _, value := range v {
+		//add waitgroup
+		w.Add(1)
+		// go it
+		go func(Type string, Serial string) {
+			handle.Handle(Type, Serial)
+			w.Done()
+		}(value.Type, value.Serialnumber)
+	}
+
+	w.Wait()
+}

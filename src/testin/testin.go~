@@ -1,0 +1,27 @@
+package main
+
+import (
+	"fmt"
+	"runtime"
+	"sync"
+	"work"
+)
+
+func main() {
+
+	// use all the machine's cores
+	runtime.GOMAXPROCS(runtime.NumCPU())
+
+	fmt.Println("main thread")
+
+	var w sync.WaitGroup
+
+	w.Add(1)
+
+	go func() {
+		work.Work()
+		w.Done()
+	}()
+
+	w.Wait()
+}
